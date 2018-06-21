@@ -9,42 +9,59 @@ import (
 	"os"
 )
 
-// Number of workers
-
 // domain -> redirect 1 -> redirect 2
 // domain -> error:
 
-func worker(input <-chan string, ouput chan<- string, done chan<- bool) {
+// domain, 
+
+type Result struct {
+	Domain string
+	RedirectChain []string
+	Error error
+}
+
+func worker(input <-chan string, output chan<- *Result, done chan<- bool) {
 	/*
 	client := &http.Client(
 		CheckRedirect: func() {
 			//TODO:
 		}
-	} */
+	) */
 
 	fmt.Println("worker starting")
-	for url := <-input; url != ""; url = <-input {
-		fmt.Printf("working on %s\n", url)
+	for url := range input {
+		output <- &Result{Domain:url}
 	}
 
 	fmt.Println("worker done")
 	done <- true
 }
 
+func output(results <-chan *Result, done chan<- bool) {
+	for result := range results {
+		fmt.Printf("results: %s\n", result.Domain)
+	}
+	done <- true
+}
+
 func main() {
 	numWorkers := flag.Int("workers", 500, "number of concurrent requests to allow")
 	maxRedirects := flag.Int("max-redirects", 10, "maximum number of redirects to follow")
+	// Use HEAD or GET?
+
 	flag.Parse()
 
 	fmt.Printf("%d %d\n", *numWorkers, *maxRedirects)
 
 	workChan := make(chan string)
-	outputChan := make(chan string)
-	doneChan := make(chan bool)
+	outputChan := make(chan *Result)
+	workerDoneChan := make(chan bool)
+	outputDoneChan := make(chan bool)
 
 	// Launch workers
+	go output(outputChan, outputDoneChan)
 	for i := 0; i < *numWorkers; i++ {
-		go worker(workChan, outputChan, doneChan)
+		go worker(workChan, outputChan, workerDoneChan)
 	}
 
 	// Read list of urls to process
@@ -65,12 +82,12 @@ func main() {
 	}
 
 	// Notify workers that there's no more work
-	for i := 0; i < *numWorkers; i++ {
-		workChan <- ""
-	}
+	close(workChan)
 
 	// Wait for workers to finish
 	for i := 0; i < *numWorkers; i++ {
-		<-doneChan
+		<-workerDoneChan
 	}
+	close(outputChan)
+	<-outputDoneChan
 }
