@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 	"os"
 )
 
@@ -33,6 +34,7 @@ func worker(input <-chan string, output chan<- *Result, done chan<- bool) {
 				result.RedirectChain = append(result.RedirectChain, req.URL.String())
 				return nil
 			},
+			Timeout: 30*time.Second,
 		}
 		_, err := client.Get(url)
 		if err != nil {
