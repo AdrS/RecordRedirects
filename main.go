@@ -3,16 +3,13 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 )
-
-// domain -> redirect 1 -> redirect 2
-// domain -> error:
-
-// domain, 
 
 type Result struct {
 	Domain string
@@ -21,37 +18,44 @@ type Result struct {
 }
 
 func worker(input <-chan string, output chan<- *Result, done chan<- bool) {
-	/*
-	client := &http.Client(
-		CheckRedirect: func() {
-			//TODO:
+	for domain := range input {
+		result := &Result{Domain:domain}
+		client := &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				fmt.Printf("%d vs %d\n", len(result.RedirectChain), maxRedirects)
+				if len(result.RedirectChain) >= maxRedirects {
+					return errors.New("too many redirects")
+				}
+				result.RedirectChain = append(result.RedirectChain, req.URL.String())
+				return nil
+			},
 		}
-	) */
-
-	fmt.Println("worker starting")
-	for url := range input {
-		output <- &Result{Domain:url}
+		_, err := client.Get("http://" + domain)
+		result.Error = err
+		output <- result
 	}
-
-	fmt.Println("worker done")
 	done <- true
 }
 
 func output(results <-chan *Result, done chan<- bool) {
 	for result := range results {
-		fmt.Printf("results: %s\n", result.Domain)
+		//fmt.Printf("results: %s\n", result.Domain)
+		fmt.Println(result)
 	}
 	done <- true
 }
 
+var maxRedirects int
+
 func main() {
-	numWorkers := flag.Int("workers", 500, "number of concurrent requests to allow")
-	maxRedirects := flag.Int("max-redirects", 10, "maximum number of redirects to follow")
+	var numWorkers int
+	flag.IntVar(&numWorkers, "workers", 500, "number of concurrent requests to allow")
+	flag.IntVar(&maxRedirects, "max-redirects", 10, "maximum number of redirects to follow")
 	// Use HEAD or GET?
 
 	flag.Parse()
 
-	fmt.Printf("%d %d\n", *numWorkers, *maxRedirects)
+	fmt.Printf("%d %d\n", numWorkers, maxRedirects)
 
 	workChan := make(chan string)
 	outputChan := make(chan *Result)
@@ -60,7 +64,7 @@ func main() {
 
 	// Launch workers
 	go output(outputChan, outputDoneChan)
-	for i := 0; i < *numWorkers; i++ {
+	for i := 0; i < numWorkers; i++ {
 		go worker(workChan, outputChan, workerDoneChan)
 	}
 
@@ -85,7 +89,7 @@ func main() {
 	close(workChan)
 
 	// Wait for workers to finish
-	for i := 0; i < *numWorkers; i++ {
+	for i := 0; i < numWorkers; i++ {
 		<-workerDoneChan
 	}
 	close(outputChan)
