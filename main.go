@@ -3,26 +3,30 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"flag"
-	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"os"
 )
 
 type Result struct {
-	Domain string
-	RedirectChain []string
-	Error error
+	URL string             `json:"url"`
+	RedirectChain []string `json:"chain,omitempty"`
+	Error string           `json:"error,omitempty"`
 }
 
 func worker(input <-chan string, output chan<- *Result, done chan<- bool) {
-	for domain := range input {
-		result := &Result{Domain:domain}
+	for url := range input {
+		// Use HTTP as default scheme
+		if !(strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")) {
+			url = "http://" + url
+		}
+		result := &Result{URL:url}
 		client := &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				fmt.Printf("%d vs %d\n", len(result.RedirectChain), maxRedirects)
 				if len(result.RedirectChain) >= maxRedirects {
 					return errors.New("too many redirects")
 				}
@@ -30,8 +34,10 @@ func worker(input <-chan string, output chan<- *Result, done chan<- bool) {
 				return nil
 			},
 		}
-		_, err := client.Get("http://" + domain)
-		result.Error = err
+		_, err := client.Get(url)
+		if err != nil {
+			result.Error = err.Error()
+		}
 		output <- result
 	}
 	done <- true
@@ -39,8 +45,15 @@ func worker(input <-chan string, output chan<- *Result, done chan<- bool) {
 
 func output(results <-chan *Result, done chan<- bool) {
 	for result := range results {
-		//fmt.Printf("results: %s\n", result.Domain)
-		fmt.Println(result)
+		m, err := json.Marshal(result)
+		if err != nil {
+			panic(err)
+		}
+		m = append(m, byte('\n'))
+		n, err := os.Stdout.Write(m)
+		if err != nil || n != len(m) {
+			panic(err)
+		}
 	}
 	done <- true
 }
@@ -54,8 +67,6 @@ func main() {
 	// Use HEAD or GET?
 
 	flag.Parse()
-
-	fmt.Printf("%d %d\n", numWorkers, maxRedirects)
 
 	workChan := make(chan string)
 	outputChan := make(chan *Result)
